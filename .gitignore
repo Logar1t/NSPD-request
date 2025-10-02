@@ -205,3 +205,39 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# PyPI build files - исключаем все файлы сборки
+*.egg-info/
+build/
+dist/
+*.egg
+MANIFEST
+MANIFEST.in
+setup.py
+pyproject.toml
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test files
+test_install.py
+*.log
+
+# Publishing files
+PUBLISH.md
+
+# Temporary files
+*.tmp
+*.temp
+
+# Keep only Python files and essential files
+# Allow: *.py, README.md, LICENSE, requirements.txt, .gitignore
