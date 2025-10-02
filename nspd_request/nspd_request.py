@@ -356,8 +356,8 @@ class NSPD:
         if debug:
             print(f"Извлечен geomId: {result['geom_id']}")
         
-        # Определяем тип объекта и получаем связанные
-        object_type = self.get_object_type(kad_number)
+        # Определяем тип объекта из уже полученных данных
+        object_type = self._determine_object_type_from_data(data)
         if not object_type:
             result["error"] = "Не удалось определить тип объекта"
             return result
