@@ -490,7 +490,7 @@ class NSPD:
             # Заголовки
             headers = {
                 **self.base_headers,
-                'referer': 'https://nspd.gov.ru/map?thematic=PKK&zoom=17.690976575074885&coordinate_x=4191326.8832895053&coordinate_y=7501296.123874589&theme_id=1&baseLayerId=235&is_copy_url=true&active_layers=36049,36048'
+                'referer': 'https://nspd.gov.ru/map?thematic=PKK&zoom=17.690976575074885&coordinate_x=4191326.8832895053&coordinate_y=7501296.123874589&theme_id=1&baseLayerId=235&is_copy_url=true&active_layers=36048'
             }
             
             # Выполняем запрос
@@ -512,5 +512,70 @@ class NSPD:
             else:
                 return None
                 
+        except Exception as e:
+            return None
+
+    def get_oks_by_coordinates(self, latitude, longitude, bbox_size=0.05):
+        """
+        Получает кадастровый номер ОКС по координатам
+        
+        :param latitude: Широта в градусах (WGS84)
+        :param longitude: Долгота в градусах (WGS84)
+        :param bbox_size: Размер BBOX в метрах (по умолчанию 0.05)
+        :return: Кадастровый номер ОКС или None в случае ошибки
+        """
+        try:
+            # Создаем BBOX
+            bbox = self._create_bbox(latitude, longitude, bbox_size)
+
+            # URL для ОКС (слой 36049)
+            url = f"https://nspd.gov.ru/api/aeggis/v3/36049/wms"
+
+            # Параметры запроса
+            params = {
+                'REQUEST': 'GetFeatureInfo',
+                'QUERY_LAYERS': '36049',
+                'SERVICE': 'WMS',
+                'VERSION': '1.3.0',
+                'FORMAT': 'image/png',
+                'STYLES': '',
+                'TRANSPARENT': 'true',
+                'LAYERS': '36049',
+                'RANDOM': '0.915965686899393',
+                'INFO_FORMAT': 'application/json',
+                'FEATURE_COUNT': '10',
+                'I': '305',
+                'J': '183',
+                'WIDTH': '512',
+                'HEIGHT': '512',
+                'CRS': 'EPSG:3857',
+                'BBOX': bbox
+            }
+
+            # Заголовки
+            headers = {
+                **self.base_headers,
+                'referer': 'https://nspd.gov.ru/map?thematic=PKK&zoom=17.690976575074885&coordinate_x=4191326.8832895053&coordinate_y=7501296.123874589&theme_id=1&baseLayerId=235&is_copy_url=true&layers=36049'
+            }
+
+            # Выполняем запрос
+            response = requests.get(url, params=params, headers=headers, verify=False, timeout=self.timeout)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data and 'features' in data and data['features']:
+                    # Извлекаем кадастровый номер из первого найденного ОКС
+                    feature = data['features'][0]
+                    properties = feature.get('properties', {})
+                    options = properties.get('options', {})
+
+                    # Получаем кадастровый номер
+                    cad_num = options.get('cad_num') or options.get('cadNumber') or options.get('cad_number', '')
+                    return cad_num if cad_num else None
+                else:
+                    return None
+            else:
+                return None
+
         except Exception as e:
             return None
