@@ -1,6 +1,6 @@
 # NSPD Request
 
-[![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)](https://github.com/Logar1t/NSPD-request)
+[![Version](https://img.shields.io/badge/version-v2.0.1-blue.svg)](https://github.com/Logar1t/NSPD-request)
 [![GitHub](https://img.shields.io/badge/GitHub-Logar1t%2FNSPD--request-green.svg)](https://github.com/Logar1t/NSPD-request)
 
 Python-библиотека для работы с НСПД (Национальная система пространственных данных). Предоставляет упрощенные функции для получения данных по кадастровым номерам и геометриям объектов недвижимости.

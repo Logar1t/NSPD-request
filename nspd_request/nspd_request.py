@@ -27,16 +27,16 @@ except ImportError:
 # ОКС (Объект капитального строительства) включает:
 #   36369 = Здание
 #   36383 = Сооружение
-#   36384 = Объект незавершенного строительства
+#   36384 = ОНС (Объект незавершенного строительства)
 CATEGORY_IDS = {
     'ЗУ': '36368',  # Земельный участок
     'Здание': '36369',  # ОКС
     'Сооружение': '36383',  # ОКС
-    'Объект незавершенного строительства': '36384'  # ОКС
+    'ОНС': '36384'  # ОКС (Объект незавершенного строительства)
 }
 
 # Типы объектов, относящиеся к ОКС (Объект капитального строительства)
-OKS_TYPES = ['Здание', 'Сооружение', 'Объект незавершенного строительства']
+OKS_TYPES = ['Здание', 'Сооружение', 'ОНС']
 
 # Константы для слоев WMS
 LAYER_IDS = {
@@ -176,6 +176,30 @@ class NSPD:
                     meta_item = meta[0]
                     if isinstance(meta_item, dict) and 'categoryId' in meta_item:
                         return str(meta_item['categoryId'])
+            return None
+        except Exception:
+            return None
+    
+    def _extract_registers_id(self, response_data):
+        """
+        Извлекает registersId из ответа НСПД.
+        Ищет сначала в options, затем на верхнем уровне properties.
+        
+        Args:
+            response_data: Данные ответа от НСПД (результат search_by_cadastral_number)
+        
+        Returns:
+            int/str: registersId или None
+        """
+        try:
+            inner_data = (response_data.get('data') or {}) if isinstance(response_data, dict) else {}
+            if isinstance(inner_data, dict):
+                features = inner_data.get('features') or []
+                if features and isinstance(features, list) and len(features) > 0:
+                    props = features[0].get('properties') or {}
+                    if isinstance(props, dict):
+                        options = props.get('options') or {}
+                        return options.get('registersId') or props.get('registersId')
             return None
         except Exception:
             return None
@@ -342,9 +366,15 @@ class NSPD:
                 if object_type == "ЗУ":
                     # Для ЗУ получаем связанные ОКС
                     related = self.get_oks_by_land_plot(geom_id)
+                    # Резервный поиск, если основной не нашёл связей
+                    if not related:
+                        related = self._get_oks_by_land_plot_fallback(geom_id, data)
                 elif self._is_oks_type(object_type):
                     # Для всех типов ОКС получаем связанные ЗУ
                     related = self.get_land_plots_by_oks(geom_id)
+                    # Резервный поиск, если основной не нашёл связей
+                    if not related:
+                        related = self._get_land_plots_by_oks_fallback(geom_id, data)
                 else:
                     related = []
                 data["related"] = related if related else []
@@ -405,7 +435,7 @@ class NSPD:
             kad_number: Кадастровый номер
         
         Returns:
-            str: Тип объекта ("ЗУ", "Здание", "Сооружение", "Объект незавершенного строительства") или None
+            str: Тип объекта ("ЗУ", "Здание", "Сооружение", "ОНС") или None
         """
         data = self.search_by_cadastral_number(kad_number)
         if "error" in data:
@@ -423,7 +453,7 @@ class NSPD:
     def get_land_plots_by_oks(self, geom_id, debug=False):
         """
         Получает список ЗУ (Земельных участков) по geomId ОКС (Объект капитального строительства)
-        Работает для всех типов ОКС: Здание, Сооружение, Объект незавершенного строительства
+        Работает для всех типов ОКС: Здание, Сооружение, ОНС
         
         Args:
             geom_id: ID геометрии ОКС
@@ -434,7 +464,7 @@ class NSPD:
         """
         try:
             url = f"https://nspd.gov.ru/api/geoportal/v1/tab-values-data"
-            category_ids = [CATEGORY_IDS['Здание'], CATEGORY_IDS['Сооружение'], CATEGORY_IDS['Объект незавершенного строительства']]
+            category_ids = [CATEGORY_IDS['Здание'], CATEGORY_IDS['Сооружение'], CATEGORY_IDS['ОНС']]
             
             for category_id in category_ids:
                 params = {
@@ -489,7 +519,7 @@ class NSPD:
     def get_oks_by_land_plot(self, geom_id, debug=False):
         """
         Получает список ОКС (Объект капитального строительства) по geomId ЗУ
-        Возвращает все типы ОКС: Здание, Сооружение, Объект незавершенного строительства
+        Возвращает все типы ОКС: Здание, Сооружение, ОНС
         
         Args:
             geom_id: ID геометрии ЗУ (Земельный участок)
@@ -550,6 +580,130 @@ class NSPD:
                 print(f"Исключение при запросе списка ОКС для geomId {geom_id}: {e}")
             return None
     
+    def _get_land_plots_by_oks_fallback(self, geom_id, response_data, debug=False):
+        """
+        Резервный метод получения связанных ЗУ для ОКС через tab-values-data
+        с параметрами objdocId и registersId.
+        Используется, когда основной метод get_land_plots_by_oks не нашёл связей.
+        
+        Args:
+            geom_id: ID геометрии ОКС (будет использован как objdocId)
+            response_data: Полные данные ответа от search_by_cadastral_number
+            debug: Включить отладочную информацию
+        
+        Returns:
+            list: Список кадастровых номеров ЗУ или None
+        """
+        try:
+            registers_id = self._extract_registers_id(response_data)
+            
+            # Если registersId не найден — используем значение по умолчанию
+            if registers_id is None:
+                registers_id = 36441
+            
+            if debug:
+                print(f"Fallback: запрос tab-values-data с objdocId={geom_id}, registersId={registers_id}")
+            
+            url = "https://nspd.gov.ru/api/geoportal/v1/tab-values-data"
+            params = {
+                'tabClass': 'landLinks',
+                'objdocId': geom_id,
+                'registersId': registers_id
+            }
+            headers = {
+                **self.base_headers,
+                'referer': (
+                    'https://nspd.gov.ru/map?thematic=PKK&theme_id=1&is_copy_url=true'
+                    '&active_layers=36329%2C36328%2C36049%2C36945'
+                )
+            }
+            
+            response = requests.get(url, params=params, headers=headers, verify=False, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                zu_list = []
+                
+                if isinstance(data, dict) and 'value' in data and isinstance(data['value'], list):
+                    zu_list = [v.strip() for v in data['value'] if v and v.strip()]
+                
+                if debug:
+                    print(f"Fallback: найдено ЗУ: {len(zu_list)}")
+                
+                return zu_list if zu_list else None
+            else:
+                if debug:
+                    print(f"Fallback: ошибка HTTP {response.status_code}")
+                return None
+        except Exception as e:
+            if debug:
+                print(f"Fallback: исключение при запросе tab-values-data: {e}")
+            return None
+    
+    def _get_oks_by_land_plot_fallback(self, geom_id, response_data, debug=False):
+        """
+        Резервный метод получения связанных ОКС для ЗУ через tab-group-data
+        с параметрами objdocId и registersId.
+        Используется, когда основной метод get_oks_by_land_plot не нашёл связей.
+        
+        Args:
+            geom_id: ID геометрии ЗУ (будет использован как objdocId)
+            response_data: Полные данные ответа от search_by_cadastral_number
+            debug: Включить отладочную информацию
+        
+        Returns:
+            list: Список кадастровых номеров ОКС или None
+        """
+        try:
+            registers_id = self._extract_registers_id(response_data)
+            
+            if registers_id is None:
+                registers_id = 36440
+            
+            if debug:
+                print(f"Fallback ЗУ→ОКС: запрос tab-group-data с objdocId={geom_id}, registersId={registers_id}")
+            
+            url = "https://nspd.gov.ru/api/geoportal/v1/tab-group-data"
+            params = {
+                'tabClass': 'objectsList',
+                'objdocId': geom_id,
+                'registersId': registers_id
+            }
+            headers = {
+                **self.base_headers,
+                'referer': (
+                    'https://nspd.gov.ru/map?thematic=PKK&theme_id=1&is_copy_url=true'
+                    '&active_layers=36329%2C36328%2C36049%2C36945'
+                )
+            }
+            
+            response = requests.get(url, params=params, headers=headers, verify=False, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                oks_list = []
+                
+                # Кадастры из object[*].value
+                if isinstance(data, dict) and 'object' in data and isinstance(data['object'], list):
+                    for obj in data['object']:
+                        if isinstance(obj, dict) and 'value' in obj and isinstance(obj['value'], list):
+                            for value in obj['value']:
+                                if value and value.strip():
+                                    oks_list.append(value.strip())
+                
+                if debug:
+                    print(f"Fallback ЗУ→ОКС: найдено ОКС: {len(oks_list)}")
+                
+                return oks_list if oks_list else None
+            else:
+                if debug:
+                    print(f"Fallback ЗУ→ОКС: ошибка HTTP {response.status_code}")
+                return None
+        except Exception as e:
+            if debug:
+                print(f"Fallback ЗУ→ОКС: исключение при запросе tab-group-data: {e}")
+            return None
+    
     def _is_oks_type(self, object_type):
         """
         Проверяет, является ли тип объекта ОКС (Объект капитального строительства)
@@ -571,7 +725,7 @@ class NSPD:
         
         Returns:
             str: "ЗУ" (Земельный участок), "Здание" (ОКС), "Сооружение" (ОКС), 
-                 "Объект незавершенного строительства" (ОКС) или None
+                 "ОНС" (ОКС) или None
         """
         # Извлекаем categoryId из meta
         category_id = self._extract_category_id(data)
@@ -609,7 +763,7 @@ class NSPD:
         
         Returns:
             dict: Словарь с данными объекта и связанными объектами.
-                  type может быть: "ЗУ", "Здание", "Сооружение", "Объект незавершенного строительства"
+                  type может быть: "ЗУ", "Здание", "Сооружение", "ОНС"
         """
         result = {
             "data": None,
@@ -659,6 +813,15 @@ class NSPD:
                 result["related"] = oks_list
                 if debug:
                     print(f"Найдено связанных ОКС: {len(oks_list)}")
+            else:
+                # Резервный поиск через tab-group-data с objdocId/registersId
+                if debug:
+                    print("Основной поиск ОКС не дал результатов, пробуем fallback (tab-group-data с objdocId)...")
+                oks_list_fallback = self._get_oks_by_land_plot_fallback(result["geom_id"], data, debug)
+                if oks_list_fallback:
+                    result["related"] = oks_list_fallback
+                    if debug:
+                        print(f"Fallback: найдено связанных ОКС: {len(oks_list_fallback)}")
         # Для всех типов ОКС (Объект капитального строительства: Здание, Сооружение, ОНС) получаем связанные ЗУ
         elif self._is_oks_type(object_type):
             zu_list = self.get_land_plots_by_oks(result["geom_id"], debug)
@@ -666,6 +829,15 @@ class NSPD:
                 result["related"] = zu_list
                 if debug:
                     print(f"Найдено связанных ЗУ: {len(zu_list)}")
+            else:
+                # Резервный поиск через tab-values-data с objdocId/registersId
+                if debug:
+                    print("Основной поиск ЗУ не дал результатов, пробуем fallback (tab-values-data с objdocId)...")
+                zu_list_fallback = self._get_land_plots_by_oks_fallback(result["geom_id"], data, debug)
+                if zu_list_fallback:
+                    result["related"] = zu_list_fallback
+                    if debug:
+                        print(f"Fallback: найдено связанных ЗУ: {len(zu_list_fallback)}")
         
         return result
     
